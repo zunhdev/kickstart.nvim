@@ -428,6 +428,10 @@ do
   -- - sr)'  - [S]urround [R]eplace [)] [']
   require('mini.surround').setup()
 
+  -- Automatically insert matching brackets, quotes, etc. as you type.
+  -- (Ships inside mini.nvim, just not enabled by default.) Pairs nicely with nvim-ts-autotag.
+  require('mini.pairs').setup()
+
   -- Simple and easy statusline.
   --  You could remove this setup call if you don't like it,
   --  and try some other statusline plugin
@@ -677,24 +681,119 @@ do
       if client and client:supports_method('textDocument/inlayHint', event.buf) then
         map('<leader>th', function() vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled { bufnr = event.buf }) end, '[T]oggle Inlay [H]ints')
       end
+
+      -- When the ESLint language server attaches, fix + format this buffer on every save.
+      -- `LspEslintFixAll` is a command the ESLint server itself provides; it applies your
+      -- project's ESLint autofixes (formatting rules included) in one pass — so ESLint, not
+      -- prettier/conform, is what formats JS/TS/Vue files here.
+      if client and client.name == 'eslint' then
+        vim.api.nvim_create_autocmd('BufWritePre', {
+          buffer = event.buf,
+          command = 'LspEslintFixAll',
+        })
+
+        -- Also route the manual `<leader>f` format key through ESLint for this buffer. Without
+        -- this, `<leader>f` would fall through to the TypeScript server's (vtsls) own formatter
+        -- (because conform.nvim has no JS/TS/Vue formatter and falls back to the LSP), which
+        -- would fight your ESLint formatting rules. The buffer-local map shadows the global one.
+        vim.keymap.set({ 'n', 'x' }, '<leader>f', '<cmd>LspEslintFixAll<cr>', { buffer = event.buf, desc = '[F]ormat buffer (ESLint)' })
+      end
     end,
   })
 
   -- Enable the following language servers
   --  Feel free to add/remove any LSPs that you want here. They will automatically be installed.
   --  See `:help lsp-config` for information about keys and how to configure
+  -- Vue 3 works in "hybrid mode": the Vue server (`vue_ls`) only handles the template/CSS,
+  -- while the TypeScript server (`vtsls`) handles the `<script>` TypeScript — but ONLY if it
+  -- loads Vue's `@vue/typescript-plugin`. That plugin ships *inside* the Mason-installed
+  -- `vue-language-server` package. The subfolder it lives in has historically been either
+  -- `@vue/language-server` or `@vue/typescript-plugin`, so we probe for whichever exists.
+  --
+  -- NOTE: On the very first launch the package isn't installed yet, so this returns the default
+  -- path; it resolves correctly once Mason finishes installing and you restart Neovim.
+  local function vue_typescript_plugin_location()
+    local base = vim.fn.stdpath 'data' .. '/mason/packages/vue-language-server/node_modules/@vue'
+    for _, sub in ipairs { '/language-server', '/typescript-plugin' } do
+      if vim.uv.fs_stat(base .. sub) then return base .. sub end
+    end
+    return base .. '/language-server'
+  end
+
   ---@type table<string, vim.lsp.Config>
   local servers = {
-    -- clangd = {},
-    -- gopls = {},
-    -- pyright = {},
-    -- rust_analyzer = {},
-    --
-    -- Some languages (like typescript) have entire language plugins that can be useful:
-    --    https://github.com/pmizio/typescript-tools.nvim
-    --
-    -- But for many setups, the LSP (`ts_ls`) will work just fine
-    -- ts_ls = {},
+    -- [[ Go ]]
+    -- `gopls` is the official Go language server. These settings enable the most useful extras.
+    -- We deliberately do NOT set `gofumpt = true` here, because formatting is done by conform.nvim
+    -- (Section 6) — enabling it in both places would format the file twice.
+    gopls = {
+      settings = {
+        gopls = {
+          staticcheck = true, -- run the extra `staticcheck` analyzers for richer diagnostics
+          usePlaceholders = true, -- on completion, fill function arguments as editable snippets
+          completeUnimported = true, -- suggest symbols from packages you haven't imported yet
+          analyses = {
+            unusedparams = true, -- flag unused function parameters
+            unusedwrite = true, -- flag writes to variables that are never read
+            nilness = true, -- flag redundant nil checks / guaranteed nil dereferences
+          },
+          -- Inlay hints stay hidden until you toggle them with `<leader>th` (see LspAttach above);
+          -- these just decide WHICH hints appear once enabled.
+          hints = {
+            assignVariableTypes = true,
+            compositeLiteralFields = true,
+            constantValues = true,
+            parameterNames = true,
+            rangeVariableTypes = true,
+          },
+        },
+      },
+    },
+
+    -- [[ TypeScript / JavaScript — and TypeScript inside .vue files ]]
+    -- `vtsls` is a fast wrapper around the official TypeScript server. We load Vue's TypeScript
+    -- plugin into it so the SAME server also understands `.vue` files. Two required bits:
+    --   * `filetypes` is extended to include `vue` (its default omits it).
+    --   * the plugin's `languages` list must include `vue`.
+    -- Formatting is left to ESLint (see `eslint` below), not vtsls.
+    vtsls = {
+      filetypes = { 'javascript', 'javascriptreact', 'typescript', 'typescriptreact', 'vue' },
+      settings = {
+        vtsls = {
+          tsserver = {
+            globalPlugins = {
+              {
+                name = '@vue/typescript-plugin',
+                location = vue_typescript_plugin_location(),
+                languages = { 'vue' },
+                configNamespace = 'typescript',
+              },
+            },
+          },
+        },
+        -- Which inlay hints to show once toggled on with `<leader>th`.
+        typescript = {
+          inlayHints = {
+            parameterNames = { enabled = 'literals' },
+            variableTypes = { enabled = false },
+            functionLikeReturnTypes = { enabled = true },
+          },
+        },
+      },
+    },
+
+    -- [[ Vue — template + CSS half of hybrid mode ]]
+    -- `vue_ls` only handles `<template>` and `<style>`; the `<script>` TypeScript is answered by
+    -- `vtsls` above. nvim-lspconfig's default `vue_ls` config already wires the two servers
+    -- together (via an `on_init` handler that forwards TS requests to vtsls), so an empty table
+    -- is all we need.
+    vue_ls = {},
+
+    -- [[ ESLint — linter AND formatter for JS/TS/Vue ]]
+    -- The ESLint language server surfaces your project's lint rules as diagnostics. Because your
+    -- projects also use ESLint for formatting, we run its `LspEslintFixAll` command on save
+    -- (wired up in the LspAttach autocmd above) instead of pulling in prettier.
+    eslint = {},
 
     stylua = {}, -- Used to format Lua code
 
@@ -752,7 +851,14 @@ do
   -- You can press `g?` for help in this menu.
   local ensure_installed = vim.tbl_keys(servers or {})
   vim.list_extend(ensure_installed, {
-    -- You can add other tools here that you want Mason to install
+    -- Extra tools (and a couple of explicit LSP package names) for Mason to install.
+    -- We spell out the exact Mason package names here because mason-tool-installer's automatic
+    -- "lspconfig name -> Mason package name" translation can miss recently renamed servers
+    -- (notably the `volar` -> `vue_ls` rename), which would make a server silently fail to install.
+    'vue-language-server', -- the Vue server + bundled @vue/typescript-plugin
+    'eslint-lsp', -- vscode-eslint-language-server
+    'goimports', -- Go: organize imports + format
+    'gofumpt', -- Go: stricter gofmt
   })
 
   require('mason-tool-installer').setup { ensure_installed = ensure_installed }
@@ -775,8 +881,11 @@ do
     format_on_save = function(bufnr)
       -- You can specify filetypes to autoformat on save here:
       local enabled_filetypes = {
+        go = true, -- format Go with goimports + gofumpt on save
         -- lua = true,
         -- python = true,
+        -- NOTE: JS/TS/Vue are intentionally NOT here — they are formatted by ESLint on save
+        -- (see the eslint LspAttach autocmd in Section 5), not by conform.
       }
       if enabled_filetypes[vim.bo[bufnr].filetype] then
         return { timeout_ms = 500 }
@@ -789,10 +898,13 @@ do
     },
     -- You can also specify external formatters in here.
     formatters_by_ft = {
-      -- rust = { 'rustfmt' },
-      -- Conform can also run multiple formatters sequentially
-      -- python = { "isort", "black" },
+      -- Go: run goimports FIRST (adds/removes/sorts imports), THEN gofumpt (stricter gofmt).
+      -- Conform runs a filetype's formatters in listed order.
+      go = { 'goimports', 'gofumpt' },
+      -- NOTE: no entries for javascript/typescript/vue on purpose — those are handled by the
+      -- ESLint language server (Section 5), per your "ESLint is the formatter" setup.
       --
+      -- rust = { 'rustfmt' },
       -- You can use 'stop_after_first' to run the first available formatter from the list
       -- javascript = { "prettierd", "prettier", stop_after_first = true },
     },
@@ -897,7 +1009,16 @@ do
   vim.pack.add { { src = gh 'nvim-treesitter/nvim-treesitter', version = 'main' } }
 
   -- Ensure basic parsers are installed
-  local parsers = { 'bash', 'c', 'diff', 'html', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'query', 'vim', 'vimdoc' }
+  -- (Parsers power highlighting/indentation/folds — this is separate from the LSP servers.)
+  local parsers = {
+    'bash', 'c', 'diff', 'html', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'query', 'vim', 'vimdoc',
+    -- Go
+    'go', 'gomod', 'gowork', 'gosum',
+    -- TypeScript / JavaScript / Vue (note: JSX lives inside the `javascript`/`tsx` parsers)
+    'typescript', 'tsx', 'javascript', 'vue', 'css',
+    -- Common companions for web/Go projects
+    'json', 'yaml',
+  }
   require('nvim-treesitter').install(parsers)
 
   ---@param buf integer
@@ -943,6 +1064,13 @@ do
       end
     end,
   })
+
+  -- [[ Auto close / rename tags ]]
+  -- `nvim-ts-autotag` uses treesitter to automatically close tags (type `<div>` and it inserts
+  -- `</div>`) and to rename the closing tag when you edit the opening one. Hugely useful in Vue
+  -- templates, HTML, and JSX/TSX. It is treesitter-based, hence configured here in Section 8.
+  vim.pack.add { gh 'windwp/nvim-ts-autotag' }
+  require('nvim-ts-autotag').setup {}
 end
 
 -- ============================================================
