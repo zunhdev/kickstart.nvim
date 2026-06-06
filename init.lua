@@ -174,6 +174,15 @@ do
 
   -- Minimal number of screen lines to keep above and below the cursor.
   vim.o.scrolloff = 10
+  -- Horizontal counterpart to scrolloff (matters when wrap is off)
+  vim.o.sidescrolloff = 8
+
+  -- Cursor shape per mode + blink (a non-blinking cursor is easy to lose)
+  vim.o.guicursor = 'n-v-c:block,i-ci-ve:ver25,r-cr-o:hor20,'
+    .. 'a:blinkwait700-blinkoff400-blinkon250'
+
+  -- Highlight only the line number, less noisy than the whole line
+  vim.o.cursorlineopt = 'number'
 
   -- if performing an operation that would fail due to unsaved changes in the buffer (like `:q`),
   -- instead raise a dialog asking if you wish to save the current file(s)
@@ -252,6 +261,19 @@ do
     desc = 'Highlight when yanking (copying) text',
     group = vim.api.nvim_create_augroup('kickstart-highlight-yank', { clear = true }),
     callback = function() vim.hl.on_yank() end,
+  })
+
+  -- Restore last cursor position when reopening a file
+  vim.api.nvim_create_autocmd('BufReadPost', {
+    desc = 'Return to last edit position',
+    group = vim.api.nvim_create_augroup('kickstart-last-pos', { clear = true }),
+    callback = function(args)
+      local mark = vim.api.nvim_buf_get_mark(args.buf, '"')
+      local lcount = vim.api.nvim_buf_line_count(args.buf)
+      if mark[1] > 0 and mark[1] <= lcount then
+        pcall(vim.api.nvim_win_set_cursor, 0, mark)
+      end
+    end,
   })
 end
 
@@ -400,6 +422,10 @@ do
   -- Highlight todo, notes, etc in comments
   vim.pack.add { gh 'folke/todo-comments.nvim' }
   require('todo-comments').setup { signs = false }
+
+  -- Smooth animated cursor trail
+  vim.pack.add { gh 'sphamba/smear-cursor.nvim' }
+  require('smear_cursor').setup {}
 
   -- [[ mini.nvim ]]
   --  A collection of various small independent plugins/modules
