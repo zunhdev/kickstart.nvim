@@ -135,6 +135,14 @@ do
   -- Enable break indent
   vim.o.breakindent = true
 
+  -- Indentation fallback. guess-indent + .editorconfig override this per-file;
+  -- these only apply when neither has an opinion (new files, plain text, etc.)
+  vim.o.expandtab = true -- insert spaces, not tabs
+  vim.o.tabstop = 2 -- a literal tab renders as 2 columns
+  vim.o.softtabstop = 2 -- <Tab>/<BS> move by 2
+  vim.o.shiftwidth = 2 -- >>, <<, and autoindent use 2
+  vim.o.smartindent = true -- language-aware auto-indent for new lines
+
   -- Enable undo/redo changes even after closing and reopening a file
   vim.o.undofile = true
 
@@ -273,6 +281,24 @@ do
       if mark[1] > 0 and mark[1] <= lcount then
         pcall(vim.api.nvim_win_set_cursor, 0, mark)
       end
+    end,
+  })
+
+  -- Per-filetype indent overrides where the ecosystem disagrees with the
+  -- 2-space default. guess-indent + .editorconfig still win on existing files;
+  -- this just sets sane defaults for new buffers of these types.
+  vim.api.nvim_create_autocmd('FileType', {
+    desc = 'Use real tabs for filetypes that require them',
+    group = vim.api.nvim_create_augroup('kickstart-indent-tabs', { clear = true }),
+    pattern = { 'go', 'make' },
+    callback = function() vim.bo.expandtab = false end, -- Go (gofmt) and Make REQUIRE tabs
+  })
+  vim.api.nvim_create_autocmd('FileType', {
+    desc = 'Use 4-space indent for Python',
+    group = vim.api.nvim_create_augroup('kickstart-indent-python', { clear = true }),
+    pattern = { 'python' },
+    callback = function()
+      vim.bo.shiftwidth, vim.bo.softtabstop, vim.bo.tabstop = 4, 4, 4
     end,
   })
 end
