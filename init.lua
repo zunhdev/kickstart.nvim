@@ -88,6 +88,10 @@ P.S. You can delete this when you're done too. It's your config now! :)
 -- SECTION 1: FOUNDATION
 -- Core Neovim settings, leaders, options, basic keymaps, basic autocmds
 -- ============================================================
+-- Stamp startup begin so the dashboard can report load time without lazy.nvim.
+-- (Snacks' built-in `startup` section reads `lazy.stats`, which we don't have.)
+_G.NVIM_START_TIME = vim.uv.hrtime()
+
 do
   -- Enable faster startup by caching compiled Lua modules
   vim.loader.enable()
@@ -385,18 +389,13 @@ do
   -- change the command under that to load whatever the name of that colorscheme is.
   --
   -- If you want to see what colorschemes are already installed, you can use `:lua Snacks.picker.colorschemes()`.
-  vim.pack.add { gh 'folke/tokyonight.nvim' }
-  ---@diagnostic disable-next-line: missing-fields
-  require('tokyonight').setup {
-    styles = {
-      comments = { italic = false }, -- Disable italics in comments
-    },
-  }
+  vim.pack.add { gh 'savq/melange-nvim' }
 
   -- Load the colorscheme here.
-  -- Like many other themes, this one has different styles, and you could load
-  -- any other, such as 'tokyonight-storm', 'tokyonight-moon', or 'tokyonight-day'.
-  vim.cmd.colorscheme 'tokyonight-night'
+  -- Melange has no `setup()`; it follows `vim.o.background`, so flip this to
+  -- 'light' for the light variant.
+  vim.o.background = 'dark'
+  vim.cmd.colorscheme 'melange'
 
   -- Highlight todo, notes, etc in comments
   vim.pack.add { gh 'folke/todo-comments.nvim' }
@@ -481,14 +480,67 @@ do
   vim.pack.add { gh 'folke/snacks.nvim' }
 
   require('snacks').setup {
-    -- We intentionally enable ONLY the picker module here. Snacks ships many other
-    -- modules (explorer, notifier, git pickers, dashboard, ...) but we keep scope to
-    -- the fuzzy finder. Add more modules to this table later if you want them.
+    -- We enable the picker and dashboard modules here. Snacks ships many other
+    -- modules (explorer, notifier, git pickers, ...) — add more to this table later.
     picker = {
       -- Route `vim.ui.select` through the Snacks picker (this is the default, set
       -- explicitly here for clarity). This is what gives `vim.lsp.buf.code_action`
       -- and other selection prompts the nice fuzzy UI — replacing telescope-ui-select.
       ui_select = true,
+    },
+    -- Start screen shown when running `nvim` with no file. A two-pane layout:
+    -- left = header + a menu of actions, right = recent files + recent projects.
+    -- All menu actions route through the Snacks pickers configured above.
+    --
+    -- NOTE: we deliberately do NOT use the built-in `startup` section — it reads
+    -- startup time from `lazy.stats`, which doesn't exist here (we use the native
+    -- `vim.pack`, not lazy.nvim). Instead the custom footer below derives load time
+    -- from `_G.NVIM_START_TIME` (stamped at the top of this file) and counts plugins
+    -- via `vim.pack.get()`.
+    dashboard = {
+      enabled = true,
+      preset = {
+        -- stylua: ignore
+        keys = {
+          { icon = ' ', key = 'f', desc = 'Find File',      action = ':lua Snacks.dashboard.pick("files")' },
+          { icon = ' ', key = 'n', desc = 'New File',       action = ':ene | startinsert' },
+          { icon = ' ', key = 'g', desc = 'Find Text',      action = ':lua Snacks.dashboard.pick("live_grep")' },
+          { icon = ' ', key = 'r', desc = 'Recent Files',   action = ':lua Snacks.dashboard.pick("oldfiles")' },
+          { icon = ' ', key = 'c', desc = 'Config',         action = ':lua Snacks.dashboard.pick("files", { cwd = vim.fn.stdpath("config") })' },
+          { icon = ' ', key = 'C', desc = 'Colorschemes',   action = ':lua Snacks.picker.colorschemes()' },
+          { icon = '󰚰 ', key = 'u', desc = 'Update Plugins', action = ':lua vim.pack.update()' },
+          { icon = ' ', key = 'q', desc = 'Quit',           action = ':qa' },
+        },
+        header = [[
+███╗   ██╗███████╗ ██████╗ ██╗   ██╗██╗███╗   ███╗
+████╗  ██║██╔════╝██╔═══██╗██║   ██║██║████╗ ████║
+██╔██╗ ██║█████╗  ██║   ██║██║   ██║██║██╔████╔██║
+██║╚██╗██║██╔══╝  ██║   ██║╚██╗ ██╔╝██║██║╚██╔╝██║
+██║ ╚████║███████╗╚██████╔╝ ╚████╔╝ ██║██║ ╚═╝ ██║
+╚═╝  ╚═══╝╚══════╝ ╚═════╝   ╚═══╝  ╚═╝╚═╝     ╚═╝]],
+      },
+      sections = {
+        { section = 'header' },
+        { section = 'keys', gap = 1, padding = 1 },
+        { pane = 2, icon = ' ', title = 'Recent Files', section = 'recent_files', indent = 2, padding = 1 },
+        { pane = 2, icon = ' ', title = 'Projects', section = 'projects', indent = 2, padding = 1 },
+        -- Custom footer: startup time + plugin count, with no lazy.nvim dependency.
+        function()
+          local now = vim.uv.hrtime()
+          local ms = math.floor((now - (_G.NVIM_START_TIME or now)) / 1e6 + 0.5)
+          local count = #vim.pack.get()
+          return {
+            align = 'center',
+            padding = 1,
+            text = {
+              { '⚡ Loaded ', hl = 'footer' },
+              { tostring(count) .. ' plugins', hl = 'special' },
+              { ' in ', hl = 'footer' },
+              { ms .. 'ms', hl = 'special' },
+            },
+          }
+        end,
+      },
     },
   }
 
